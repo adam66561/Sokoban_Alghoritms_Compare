@@ -6,7 +6,7 @@ from PySide6.QtWidgets import ( # type: ignore
 from PySide6.QtGui import QKeyEvent, QFont, QPixmap, QColor, QBrush # type: ignore
 from PySide6.QtCore import QTimer, Qt, QSize # type: ignore
 from level import Level, State 
-from solver import bfs_solve, dfs_solve # type: ignore
+from solver import bfs_solve, dfs_solve, astar_solve # type: ignore
 from typing import Callable
 import time
 from tree import generate_bfs_tree, export_tree_to_dot, render_and_open_dot # type: ignore
@@ -106,6 +106,10 @@ class SokobanWindow(QMainWindow):
         self.btn_dfs = QPushButton("Solve DFS")
         self.btn_dfs.clicked.connect(self.solve_dfs)
         top.addWidget(self.btn_dfs)
+
+        self.btn_astar = QPushButton("Solve A*")
+        self.btn_astar.clicked.connect(self.solve_astar)
+        top.addWidget(self.btn_astar)
 
         self.stats = QLabel("ruchy=0, pchnięcia=0")
         top.addWidget(self.stats)
@@ -232,7 +236,7 @@ class SokobanWindow(QMainWindow):
             QMessageBox.information(self, "Wygrana!", f"Ukończono! ruchy={self.moves}, pchnięcia={self.pushes}")
 
 
-    def _on_progress(self, s: State, depth: int, visited: int, expanded: int, dt: float, layer_end: bool):
+    def _on_progress(self, s: State, depth: int, visited: int, expanded: int, dt: float, layer_end: bool = False):
         if self.visualize_mode == False:
             return
 
@@ -397,6 +401,31 @@ class SokobanWindow(QMainWindow):
         if res.last_moves:
             self.reset_map()  # start
             self.start_animation(res.last_moves)
+
+    
+    def solve_astar(self):
+        self.layer_depth = -1
+        self.layer_cells.clear()
+        self._last_ui_update = 0.0
+
+        if self.level is None or self.state is None:
+            return
+
+        res = astar_solve(
+            self.level,
+            self.state,
+            max_states=100_000_000,  
+            on_progress=self._on_progress,  
+        )
+
+        state_to_show = res.last_state if res.last_state is not None else self.state
+        self.state = state_to_show
+        self.redraw()
+
+        if res.last_moves:
+            self.reset_map()
+            self.start_animation(res.last_moves)
+
 
 
 def main():

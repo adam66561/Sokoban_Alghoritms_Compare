@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import time
 from typing import Optional, Callable
 from level import Level, State
-
+import heapq
 
 @dataclass(frozen=True)
 class SolveResult:
@@ -14,7 +14,6 @@ class SolveResult:
     expanded_states: int
     time_ms: float
     pushes: int
-
     last_state: Optional[State]  
     last_moves: list[str]        
 
@@ -44,6 +43,20 @@ def count_pushes(level: Level, start: State, moves: list[str]) -> int:
         s, pushed = res
         pushes += int(pushed)
     return pushes
+
+
+def is_corner_deadlock(level: Level, s: State) -> bool:
+    walls = level.walls
+    goals = level.goals
+    for (bx, by) in s.boxes:
+        if (bx, by) in goals:
+            continue
+        # dwa prostopadłe "mury" -> róg
+        if ((bx-1, by) in walls and (bx, by-1) in walls): return True
+        if ((bx-1, by) in walls and (bx, by+1) in walls): return True
+        if ((bx+1, by) in walls and (bx, by-1) in walls): return True
+        if ((bx+1, by) in walls and (bx, by+1) in walls): return True
+    return False
 
 
 def bfs_solve(
@@ -190,3 +203,99 @@ def dfs_solve(
     dt_ms = (time.perf_counter() - t0) * 1000.0
     last_moves = reconstruct_moves(last_state, parent, parent_action, start) if last_state != start else []
     return SolveResult(False, [], len(visited), expanded, dt_ms, 0, last_state, last_moves)
+
+
+
+
+def heuristic_manhattan_to_goals(level: Level, s: State) -> int:
+    # admissible lower bound: suma odległości każdej skrzynki do najbliższego celu (ignoruje kolizje między skrzynkami)
+    goals = list(level.goals)
+    if not goals:
+        return 0
+    h = 0
+    for (bx, by) in s.boxes:
+        best = min(abs(bx - gx) + abs(by - gy) for (gx, gy) in goals)
+        h += best
+    return h
+
+def astar_solve(
+    level: Level,
+    start: State,
+    max_states: Optional[int] = None,
+    on_progress: Optional[Callable[[State, int, int, int, float, bool], None]] = None,
+) -> SolveResult:
+    """
+    A* po stanach (player, boxes). Koszt = liczba ruchów.
+    Heurystyka: suma Manhattan(box -> najbliższy goal) (dolne ograniczenie).
+    """
+    t0 = time.perf_counter()
+
+    if level.is_solved(start):
+        return SolveResult(True, [], 1, 0, 0.0, 0, start, [])
+
+    parent: dict[State, State] = {}
+    parent_action: dict[State, str] = {}
+
+    g_score: dict[State, int] = {start: 0}
+    closed: set[State] = set()
+
+    h0 = heuristic_manhattan_to_goals(level, start)
+    counter = 0
+    heap: list[tuple[int, int, int, State]] = [(h0, 0, counter, start)]  # (f, g, tie, state)
+
+    expanded = 0
+    last_state: State = start
+
+    while heap:
+        if max_states is not None and (len(g_score) >= max_states):
+            break
+
+        f, g, _, s = heapq.heappop(heap)
+        if s in closed:
+            continue
+
+        closed.add(s)
+        expanded += 1
+        last_state = s
+
+        if on_progress:
+            dt = time.perf_counter() - t0
+            # "depth" dla GUI = g (liczba ruchów)
+            on_progress(s, g, len(g_score), expanded, dt, False)
+
+        if level.is_solved(s):
+            moves = reconstruct_moves(s, parent, parent_action, start)
+            pushes = count_pushes(level, start, moves)
+            dt_ms = (time.perf_counter() - t0) * 1000.0
+            return SolveResult(True, moves, len(g_score), expanded, dt_ms, pushes, s, moves)
+
+        # rozwijaj następniki
+        for a in level.legal_moves(s):
+            res = level.step(s, a)
+            if res is None:
+                continue
+            ns, pushed = res
+
+            # proste odcinanie deadlocków: sprawdzaj tylko gdy było pchnięcie
+            if pushed and is_corner_deadlock(level, ns):
+                continue
+
+            ng = g + 1
+            old = g_score.get(ns)
+            if old is not None and ng >= old:
+                continue
+
+            g_score[ns] = ng
+            parent[ns] = s
+            parent_action[ns] = a
+
+            counter += 1
+            nh = heuristic_manhattan_to_goals(level, ns)
+            nf = ng + nh
+            heapq.heappush(heap, (nf, ng, counter, ns))
+
+    dt_ms = (time.perf_counter() - t0) * 1000.0
+    last_moves = reconstruct_moves(last_state, parent, parent_action, start) if last_state != start else []
+    return SolveResult(False, [], len(g_score), expanded, dt_ms, 0, last_state, last_moves)
+
+    
