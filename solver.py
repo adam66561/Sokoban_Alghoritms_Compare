@@ -5,6 +5,7 @@ import time
 from typing import Optional, Callable
 from level import Level, State
 import heapq
+import math
 
 @dataclass(frozen=True)
 class SolveResult:
@@ -206,7 +207,6 @@ def dfs_solve(
 
 
 
-
 def heuristic_manhattan_to_goals(level: Level, s: State) -> int:
     # admissible lower bound: suma odległości każdej skrzynki do najbliższego celu (ignoruje kolizje między skrzynkami)
     goals = list(level.goals)
@@ -218,7 +218,7 @@ def heuristic_manhattan_to_goals(level: Level, s: State) -> int:
         h += best
     return h
 
-def astar_solve(
+def a_star_solve(
     level: Level,
     start: State,
     max_states: Optional[int] = None,
@@ -299,3 +299,81 @@ def astar_solve(
     return SolveResult(False, [], len(g_score), expanded, dt_ms, 0, last_state, last_moves)
 
     
+def gbfs_solve(
+    level: Level,
+    start: State,
+    max_states: Optional[int] = None,
+    on_progress: Optional[Callable[[State, int, int, int, float, bool], None]] = None,
+) -> SolveResult:
+    """
+    Greedy Best-First Search po stanach (player, boxes).
+    Wybiera zawsze stan z najmniejszą heurystyką h (ignoruje g).
+    Nie gwarantuje najkrótszego rozwiązania.
+    """
+    t0 = time.perf_counter()
+
+    if level.is_solved(start):
+        return SolveResult(True, [], 1, 0, 0.0, 0, start, [])
+
+    parent: dict[State, State] = {}
+    parent_action: dict[State, str] = {}
+
+    # GBFS: zwykłe visited/closed wystarczy
+    closed: set[State] = set([start])
+
+    # g_depth trzymamy tylko do UI i ewentualnego last_moves
+    depth: dict[State, int] = {start: 0}
+
+    h0 = heuristic_manhattan_to_goals(level, start)
+    counter = 0
+
+    # GBFS: w heapie priorytetem jest samo h
+    heap: list[tuple[int, int, State]] = [(h0, counter, start)]  # (h, tie, state)
+
+    expanded = 0
+    last_state: State = start
+
+    while heap:
+        if max_states is not None and len(closed) >= max_states:
+            break
+
+        h, _, s = heapq.heappop(heap)
+        expanded += 1
+        last_state = s
+
+        g = depth[s]  # tylko informacyjnie
+
+        if on_progress:
+            dt = time.perf_counter() - t0
+            on_progress(s, g, len(closed), expanded, dt, False)
+
+        if level.is_solved(s):
+            moves = reconstruct_moves(s, parent, parent_action, start)
+            pushes = count_pushes(level, start, moves)
+            dt_ms = (time.perf_counter() - t0) * 1000.0
+            return SolveResult(True, moves, len(closed), expanded, dt_ms, pushes, s, moves)
+
+        for a in level.legal_moves(s):
+            res = level.step(s, a)
+            if res is None:
+                continue
+            ns, pushed = res
+
+            if pushed and is_corner_deadlock(level, ns):
+                continue
+
+            if ns in closed:
+                continue
+
+            closed.add(ns)
+            parent[ns] = s
+            parent_action[ns] = a
+            depth[ns] = g + 1
+
+            counter += 1
+            nh = heuristic_manhattan_to_goals(level, ns)
+            heapq.heappush(heap, (nh, counter, ns))
+
+    dt_ms = (time.perf_counter() - t0) * 1000.0
+    last_moves = reconstruct_moves(last_state, parent, parent_action, start) if last_state != start else []
+    return SolveResult(False, [], len(closed), expanded, dt_ms, 0, last_state, last_moves)

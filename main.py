@@ -6,7 +6,7 @@ from PySide6.QtWidgets import ( # type: ignore
 from PySide6.QtGui import QKeyEvent, QFont, QPixmap, QColor, QBrush # type: ignore
 from PySide6.QtCore import QTimer, Qt, QSize # type: ignore
 from level import Level, State 
-from solver import bfs_solve, dfs_solve, astar_solve # type: ignore
+from solver import bfs_solve, dfs_solve, a_star_solve, gbfs_solve # type: ignore
 from typing import Callable
 import time
 from tree import generate_bfs_tree, export_tree_to_dot, render_and_open_dot # type: ignore
@@ -110,6 +110,10 @@ class SokobanWindow(QMainWindow):
         self.btn_astar = QPushButton("Solve A*")
         self.btn_astar.clicked.connect(self.solve_astar)
         top.addWidget(self.btn_astar)
+
+        self.btn_gbfs = QPushButton("Solve GBFS")
+        self.btn_gbfs.clicked.connect(self.solve_gbfs)
+        top.addWidget(self.btn_gbfs)
 
         self.stats = QLabel("ruchy=0, pchnięcia=0")
         top.addWidget(self.stats)
@@ -411,7 +415,7 @@ class SokobanWindow(QMainWindow):
         if self.level is None or self.state is None:
             return
 
-        res = astar_solve(
+        res = a_star_solve(
             self.level,
             self.state,
             max_states=100_000_000,  
@@ -420,6 +424,29 @@ class SokobanWindow(QMainWindow):
 
         state_to_show = res.last_state if res.last_state is not None else self.state
         self.state = state_to_show
+        self.redraw()
+
+        if res.last_moves:
+            self.reset_map()
+            self.start_animation(res.last_moves)
+
+
+    def solve_gbfs(self):
+        self.layer_depth = -1
+        self.layer_cells.clear()
+        self._last_ui_update = 0.0
+
+        if self.level is None or self.state is None:
+            return
+
+        res = gbfs_solve(
+            self.level,
+            self.state,
+            max_states=100_000_000,   
+            on_progress=self._on_progress,
+        )
+
+        self.state = res.last_state if res.last_state is not None else self.state
         self.redraw()
 
         if res.last_moves:
