@@ -6,7 +6,7 @@ from PySide6.QtWidgets import ( # type: ignore
 from PySide6.QtGui import QKeyEvent, QFont, QPixmap, QColor, QBrush # type: ignore
 from PySide6.QtCore import QTimer, Qt, QSize # type: ignore
 from level import Level, State 
-from solver import bfs_solve # type: ignore
+from solver import bfs_solve, dfs_solve # type: ignore
 from typing import Callable
 import time
 from tree import generate_bfs_tree, export_tree_to_dot, render_and_open_dot # type: ignore
@@ -102,6 +102,10 @@ class SokobanWindow(QMainWindow):
         self.btn_bfs = QPushButton("Solve BFS")
         self.btn_bfs.clicked.connect(self.solve_bfs)
         top.addWidget(self.btn_bfs)
+
+        self.btn_dfs = QPushButton("Solve DFS")
+        self.btn_dfs.clicked.connect(self.solve_dfs)
+        top.addWidget(self.btn_dfs)
 
         self.stats = QLabel("ruchy=0, pchnięcia=0")
         top.addWidget(self.stats)
@@ -228,7 +232,7 @@ class SokobanWindow(QMainWindow):
             QMessageBox.information(self, "Wygrana!", f"Ukończono! ruchy={self.moves}, pchnięcia={self.pushes}")
 
 
-    def _on_bfs_progress(self, s: State, depth: int, visited: int, expanded: int, dt: float, layer_end: bool):
+    def _on_progress(self, s: State, depth: int, visited: int, expanded: int, dt: float, layer_end: bool):
         if self.visualize_mode == False:
             return
 
@@ -355,7 +359,35 @@ class SokobanWindow(QMainWindow):
         export_tree_to_dot(parent, depth, edge_action, "tree.dot")
         render_and_open_dot()
         
-        res = bfs_solve(self.level, self.state, max_states=100_000_000,     on_progress=self._on_bfs_progress)
+        res = bfs_solve(self.level, self.state, max_states=100_000_000,     on_progress=self._on_progress)
+        state_to_show = res.last_state if res.last_state is not None else self.state
+
+        #stan końcowy solvera
+        self.state = state_to_show
+        self.redraw()
+
+        if res.last_moves:
+            self.reset_map()  # start
+            self.start_animation(res.last_moves)
+
+
+    def solve_dfs(self):
+        self.first_depth.clear()
+        self.current_depth = 0
+        self._last_ui_update = 0.0
+        
+        if self.level is None or self.state is None:
+            return
+
+        self.layer_depth = -1
+        self.layer_cells.clear()
+
+        level, start = Level.from_lines(load_single_maze("./maps/sokoban-maps-60-plain.txt", self.map_spin.value()))
+        parent, children, depth, edge_action = generate_bfs_tree(level, start, max_nodes=500)
+        export_tree_to_dot(parent, depth, edge_action, "tree.dot")
+        render_and_open_dot()
+        
+        res = dfs_solve(self.level, self.state, max_depth=500, max_states=100_000_000,     on_progress=self._on_progress)
         state_to_show = res.last_state if res.last_state is not None else self.state
 
         #stan końcowy solvera

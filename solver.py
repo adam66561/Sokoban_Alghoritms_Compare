@@ -89,7 +89,6 @@ def bfs_solve(
         d = depth[s]
 
         last_state = s
-        last_moves = reconstruct_moves(s, parent, parent_action, start) if s != start else []
 
         for a in level.legal_moves(s):
             res = level.step(s, a)
@@ -126,6 +125,68 @@ def bfs_solve(
             on_progress(s, d, len(visited), expanded, dt, layer_end)
 
     dt_ms = (time.perf_counter() - t0) * 1000.0
+
+    last_moves = reconstruct_moves(s, parent, parent_action, start) if s != start else []
     return SolveResult(False, [], len(visited), expanded, dt_ms, 0, last_state, last_moves)
 
 
+def dfs_solve(
+    level: Level,
+    start: State,
+    max_depth: int = 200,
+    max_states: int | None = None,
+    on_progress: Optional[Callable[[State, int, int, int, float], None]] = None,
+) -> SolveResult:
+    t0 = time.perf_counter()
+
+    stack = [(start, 0)]
+    visited: set[State] = {start}
+
+    parent: dict[State, State] = {}
+    parent_action: dict[State, str] = {}
+
+    expanded = 0
+    last_state = start
+
+    if level.is_solved(start):
+        return SolveResult(True, [], 1, 0, 0.0, 0, start, [])
+
+    while stack:
+        s, depth = stack.pop()
+        expanded += 1
+        last_state = s
+
+        if max_states is not None and len(visited) >= max_states:
+            break
+
+        if on_progress:
+            dt = time.perf_counter() - t0
+            on_progress(s, depth, len(visited), expanded, dt, False)
+
+        if depth >= max_depth:
+            continue
+
+        for a in level.legal_moves(s):
+            res = level.step(s, a)
+            if res is None:
+                continue
+
+            ns, _ = res
+            if ns in visited:
+                continue
+
+            visited.add(ns)
+            parent[ns] = s
+            parent_action[ns] = a
+
+            if level.is_solved(ns):
+                moves = reconstruct_moves(ns, parent, parent_action, start)
+                pushes = count_pushes(level, start, moves)
+                dt_ms = (time.perf_counter() - t0) * 1000.0
+                return SolveResult(True, moves, len(visited), expanded, dt_ms, pushes, ns, moves)
+
+            stack.append((ns, depth + 1))
+
+    dt_ms = (time.perf_counter() - t0) * 1000.0
+    last_moves = reconstruct_moves(last_state, parent, parent_action, start) if last_state != start else []
+    return SolveResult(False, [], len(visited), expanded, dt_ms, 0, last_state, last_moves)
