@@ -52,7 +52,6 @@ def is_corner_deadlock(level: Level, s: State) -> bool:
     for (bx, by) in s.boxes:
         if (bx, by) in goals:
             continue
-        # dwa prostopadłe "mury" -> róg
         if ((bx-1, by) in walls and (bx, by-1) in walls): return True
         if ((bx-1, by) in walls and (bx, by+1) in walls): return True
         if ((bx+1, by) in walls and (bx, by-1) in walls): return True
@@ -276,7 +275,7 @@ def a_star_solve(
                 continue
             ns, pushed = res
 
-            # proste odcinanie deadlocków: sprawdzaj tylko gdy było pchnięcie
+            # sprawdzaj tylko gdy było pchnięcie i nie deadlock
             if pushed and is_corner_deadlock(level, ns):
                 continue
 
@@ -318,16 +317,15 @@ def gbfs_solve(
     parent: dict[State, State] = {}
     parent_action: dict[State, str] = {}
 
-    # GBFS: zwykłe visited/closed wystarczy
     closed: set[State] = set([start])
 
-    # g_depth trzymamy tylko do UI i ewentualnego last_moves
+    # tylko do UI i last_moves
     depth: dict[State, int] = {start: 0}
 
     h0 = heuristic_manhattan_to_goals(level, start)
     counter = 0
 
-    # GBFS: w heapie priorytetem jest samo h
+    # w heapie priorytetem jest samo h
     heap: list[tuple[int, int, State]] = [(h0, counter, start)]  # (h, tie, state)
 
     expanded = 0

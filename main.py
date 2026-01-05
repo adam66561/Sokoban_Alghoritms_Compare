@@ -4,13 +4,15 @@ from PySide6.QtWidgets import ( # type: ignore
     QPushButton, QLabel, QSpinBox, QMessageBox, QGraphicsView, QGraphicsScene
 )
 from PySide6.QtGui import QKeyEvent, QFont, QPixmap, QColor, QBrush # type: ignore
-from PySide6.QtCore import QTimer, Qt, QSize # type: ignore
+from PySide6.QtCore import QTimer, Qt, QSize, QThread, Signal # type: ignore
 from level import Level, State 
 from solver import bfs_solve, dfs_solve, a_star_solve, gbfs_solve # type: ignore
 from typing import Callable
 import time
 from tree import generate_bfs_tree, export_tree_to_dot, render_and_open_dot # type: ignore
 import math
+from push_env import PushSokobanEnv # type: ignore
+from dqn_train import train_dqn, play_dqn, DQNAgent # type: ignore
 
 
 def load_single_maze(path: str, maze_number: int) -> list[str] | None:
@@ -114,6 +116,18 @@ class SokobanWindow(QMainWindow):
         self.btn_gbfs = QPushButton("Solve GBFS")
         self.btn_gbfs.clicked.connect(self.solve_gbfs)
         top.addWidget(self.btn_gbfs)
+
+        self.btn_train_rl = QPushButton("Train DQN")
+        self.btn_train_rl.clicked.connect(self.train_dqn_clicked)
+        top.addWidget(self.btn_train_rl)
+
+        self.btn_play_rl = QPushButton("Play DQN")
+        self.btn_play_rl.clicked.connect(self.play_dqn_clicked)
+        top.addWidget(self.btn_play_rl)
+
+        self.dqn_agent: DQNAgent | None = None
+        self._rl_thread: QThread | None = None
+
 
         self.stats = QLabel("ruchy=0, pchnięcia=0")
         top.addWidget(self.stats)
@@ -452,6 +466,73 @@ class SokobanWindow(QMainWindow):
         if res.last_moves:
             self.reset_map()
             self.start_animation(res.last_moves)
+
+
+###########################################################        
+##################                       ##################
+################## REINFORCMENT LEARNING ##################
+##################                       ##################
+###########################################################        
+        
+    def _make_env_for_current_map(self):
+        if self.level is None or self.start_state is None:
+            return None
+        return PushSokobanEnv(self.level, self.start_state, max_pushes=80)
+
+
+    def train_dqn_clicked(self):
+        env = self._make_env_for_current_map()
+        if env is None:
+            return
+
+        self.update_stats("DQN: training...")
+        self.btn_train_rl.setEnabled(False)
+        self.btn_play_rl.setEnabled(False)
+
+        worker = DQNTrainWorker(env)
+        self._rl_thread = worker
+
+        worker.log.connect(self.update_stats)
+        worker.done.connect(self._on_dqn_trained)
+        worker.start()
+
+    def _on_dqn_trained(self, agent: DQNAgent):
+        self.dqn_agent = agent
+        self.update_stats("DQN: trained")
+        self.btn_train_rl.setEnabled(True)
+        self.btn_play_rl.setEnabled(True)
+
+    def play_dqn_clicked(self):
+        if self.dqn_agent is None:
+            QMessageBox.information(self, "DQN", "Najpierw kliknij Train DQN.")
+            return
+
+        env = self._make_env_for_current_map()
+        if env is None:
+            return
+
+        moves = play_dqn(env, self.dqn_agent, max_steps=120) 
+        self.reset_map()
+        self.start_animation(moves, interval_ms=60)
+
+
+
+class DQNTrainWorker(QThread):
+    log = Signal(str)
+    done = Signal(object)  # agent
+
+    def __init__(self, env: PushSokobanEnv):
+        super().__init__()
+        self.env = env
+
+    def run(self):
+        def on_log(ep, total_steps, eps, avg_ret, solved_rate):
+            self.log.emit(f"DQN: ep={ep} steps={total_steps} eps={eps:.2f} avg_ret={avg_ret:.1f} solved={solved_rate:.2f}")
+
+        agent = train_dqn(self.env, episodes=3000, on_log=on_log)
+        self.done.emit(agent)
+
+
 
 
 

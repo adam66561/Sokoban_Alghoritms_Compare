@@ -1547,5 +1547,66 @@ XXXXX XXXX X@XXXX   .X
     XXXXXXXX          
 
 *************************************
+Maze: 65
+File offset: 148C, DS:00FC, table offset: 0000
+Size X: 14
+Size Y: 10
+End: 14BD
+Length: 50
+
+    XXXXX             
+    X   X             
+    X*  X             
+  XXX   XXX           
+  X     ..X           
+XXX   XXXXX     
+X        .XXXX
+X *  *      @X      
+X            X
+XXXXXXXXXXXXXX
+
+*************************************
+Maze: 66
+File offset: 148C, DS:00FC, table offset: 0000
+Size X: 11
+Size Y: 8
+End: 14BD
+Length: 50
+
+    XXXXX             
+    X   X             
+    X*  X             
+  XXX   XXX           
+  X  *  ..X           
+XXX       X     
+X@   *   .X
+XXXXXXXXXXX      
+
+*************************************
+Maze: 67
+File offset: 148C, DS:00FC, table offset: 0000
+Size X: 11
+Size Y: 3
+End: 14BD
+Length: 50
+          
+XXXXXXXXXXXX     
+X@   *   . X
+XXXXXXXXXXXX      
+
+*************************************
+Maze: 68
+File offset: 148C, DS:00FC, table offset: 0000
+Size X: 11
+Size Y: 4
+End: 14BD
+Length: 50
+          
+XXXXXXXXXXXX     
+X@   *   . X
+X      * . X
+XXXXXXXXXXXX       
+
+*************************************
 
 
