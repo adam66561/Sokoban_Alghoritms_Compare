@@ -31,7 +31,7 @@ class PushSokobanEnv:
       (środowisko generuje sekwencję UDLR w info['moves'] żebyś mógł to animować w GUI)
     """
 
-    def __init__(self, level: Level, start: State, max_pushes: int = 80):
+    def __init__(self, level: Level, start: State, max_pushes: int = 160):
         self.level = level
         self.start = start
         self.max_pushes = max_pushes
@@ -183,7 +183,7 @@ class PushSokobanEnv:
 
         state_hash = (self.state.player, tuple(sorted(self.state.boxes)))
         if state_hash in self.visited_states:
-            reward -= 10.0  # kara za kręcenie się w kółko
+            reward -= 2.0  # kara za kręcenie się w kółko
         self.visited_states.add(state_hash)
 
         # kara i koniec gdy akcja nielegalna
@@ -192,7 +192,7 @@ class PushSokobanEnv:
             obs = self._obs()
             next_mask, next_map = self._action_mask_and_map(self.state)
             self._last_push_map = next_map
-            return StepOut(obs, reward, False, {"illegal": True}), next_mask
+            return StepOut(obs, reward, True, {"illegal": True}), next_mask
 
         walk_moves, push_move = self._last_push_map[action_idx]
 
@@ -201,7 +201,7 @@ class PushSokobanEnv:
         for m in walk_moves:
             res = self.level.step(s, m)
             if res is None:
-                reward -= 10.0
+                reward -= 20.0
                 obs = self._obs()
                 next_mask, next_map = self._action_mask_and_map(self.state)
                 self._last_push_map = next_map

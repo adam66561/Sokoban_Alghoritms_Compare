@@ -16,6 +16,7 @@ import json
 from datetime import datetime, time
 import time
 from pathlib import Path
+from dqn_train import train_dqn, play_dqn, DQNAgent, save_episodes_log, load_episodes_log
 
 
 def load_single_maze(path: str, maze_number: int) -> list[str] | None:
@@ -92,6 +93,8 @@ class SokobanWindow(QMainWindow):
         self.last_solution_moves: list[str] = []
         self.last_solve_result = None  
 
+        self.dqn_episodes_log: list[dict] = []
+
 
         # --- UI layout ---
         root = QWidget()
@@ -101,13 +104,13 @@ class SokobanWindow(QMainWindow):
         top = QHBoxLayout()
         layout.addLayout(top)
 
-        top.addWidget(QLabel("Mapa #:"))
+        top.addWidget(QLabel("Map #:"))
         self.map_spin = QSpinBox()
         self.map_spin.setRange(1, 10_000)
         self.map_spin.setValue(1)
         top.addWidget(self.map_spin)
 
-        self.btn_load = QPushButton("Wczytaj")
+        self.btn_load = QPushButton("Load map")
         self.btn_load.clicked.connect(self.load_map)
         top.addWidget(self.btn_load)
 
@@ -153,26 +156,47 @@ class SokobanWindow(QMainWindow):
 
         mid = QHBoxLayout()
         layout.addLayout(mid)
-        self.btn_save_sol = QPushButton("Zapisz rozwiązanie")
+        self.btn_save_sol = QPushButton("Save solution")
         self.btn_save_sol.clicked.connect(self.save_solution_clicked)
         self.btn_save_sol.setEnabled(False) 
         mid.addWidget(self.btn_save_sol)
 
-        self.btn_load_sol_bfs = QPushButton("Wczytaj rozwiązanie BFS")
+        self.btn_load_sol_bfs = QPushButton("Load solution BFS")
         self.btn_load_sol_bfs.clicked.connect(lambda: self.load_solution_clicked("BFS"))
         mid.addWidget(self.btn_load_sol_bfs)
 
-        self.btn_load_sol_dfs = QPushButton("Wczytaj rozwiązanie DFS")
+        self.btn_load_sol_dfs = QPushButton("Load solution DFS")
         self.btn_load_sol_dfs.clicked.connect(lambda: self.load_solution_clicked("DFS"))
         mid.addWidget(self.btn_load_sol_dfs)
 
-        self.btn_load_sol_astar = QPushButton("Wczytaj rozwiązanie A*")
+        self.btn_load_sol_astar = QPushButton("Load solution A*")
         self.btn_load_sol_astar.clicked.connect(lambda: self.load_solution_clicked("A*"))
         mid.addWidget(self.btn_load_sol_astar)
 
-        self.btn_load_sol_gbfs = QPushButton("Wczytaj rozwiązanie GBFS")
+        self.btn_load_sol_gbfs = QPushButton("Load solution GBFS")
         self.btn_load_sol_gbfs.clicked.connect(lambda: self.load_solution_clicked("GBFS"))
         mid.addWidget(self.btn_load_sol_gbfs)
+
+        self.btn_save_dqn = QPushButton("Save DQN")
+        self.btn_save_dqn.clicked.connect(self.save_dqn_clicked)
+        self.btn_save_dqn.setEnabled(False)
+        mid.addWidget(self.btn_save_dqn)
+
+        self.btn_load_dqn = QPushButton("Load DQN")
+        self.btn_load_dqn.clicked.connect(self.load_dqn_clicked)
+        mid.addWidget(self.btn_load_dqn)
+
+        mid.addWidget(QLabel("Ep #:"))
+        self.ep_spin = QSpinBox()
+        self.ep_spin.setRange(1, 1_000_000)
+        self.ep_spin.setValue(1)
+        mid.addWidget(self.ep_spin)
+
+        self.btn_replay_ep = QPushButton("Replay Ep")
+        self.btn_replay_ep.clicked.connect(self.replay_episode_clicked)
+        self.btn_replay_ep.setEnabled(False)
+        mid.addWidget(self.btn_replay_ep)
+
 
         mid.addStretch(1)
 
@@ -227,7 +251,7 @@ class SokobanWindow(QMainWindow):
 
     def update_stats(self, text: str | None = None):
         if text is None:
-            text = f"ruchy={self.moves}, pchnięcia={self.pushes}"
+            text = f"moves={self.moves}, pushes={self.pushes}"
         self.stats.setText(text)
 
 
@@ -299,7 +323,7 @@ class SokobanWindow(QMainWindow):
 
         if self.level.is_solved(self.state):
             self.game_over = True
-            QMessageBox.information(self, "Wygrana!", f"Ukończono! ruchy={self.moves}, pchnięcia={self.pushes}")
+            QMessageBox.information(self, "WIN!", f"Solved! moves={self.moves}, pushes={self.pushes}")
 
 
     def _on_progress(self, s: State, depth: int, visited: int, expanded: int, dt: float, layer_end: bool = False):
@@ -411,7 +435,7 @@ class SokobanWindow(QMainWindow):
         if self.level.is_solved(self.state):
             self.anim_timer.stop()
             self.game_over = True
-            QMessageBox.information(self, "Wygrana!", f"Ukończono! ruchy={self.moves}, pchnięcia={self.pushes}")
+            QMessageBox.information(self, "WIN!", f"Solved! moves={self.moves}, pushes={self.pushes}")
 
 
     def solve_bfs(self):
@@ -568,7 +592,7 @@ class SokobanWindow(QMainWindow):
     def save_solution_clicked(self):
         res = self.last_solve_result
         if res is None or not res.solved:
-            QMessageBox.information(self, "Zapis", "Brak rozwiązania do zapisania.")
+            QMessageBox.information(self, "Save", "No solution to save found.")
             return
 
 
@@ -610,7 +634,7 @@ class SokobanWindow(QMainWindow):
         db["items"] = items
         self._save_solutions_db(db)
 
-        QMessageBox.information(self, "Zapis", f"Zapisano rozwiązanie: mapa {map_id}, {algo} ({len(self.last_solution_moves)} ruchów).")
+        QMessageBox.information(self, "Save", f"Saved solution: map {map_id}, {algo} ({len(self.last_solution_moves)} moves).")
 
     def load_solution_clicked(self, algo: str):
         map_id = self._current_map_id()
@@ -622,7 +646,7 @@ class SokobanWindow(QMainWindow):
             if int(it.get("map_id", -1)) == map_id and str(it.get("algo")) == algo
         ]
         if not cand:
-            QMessageBox.information(self, "Odczyt", f"Brak zapisanego rozwiązania {algo} dla mapy {map_id}.")
+            QMessageBox.information(self, "Load", f"No solution found for {algo} for map {map_id}.")
             return
 
         cand.sort(key=lambda it: int(it.get("len_moves", 10**9)))
@@ -630,7 +654,7 @@ class SokobanWindow(QMainWindow):
 
         moves = str_to_moves(str(best.get("moves", "")))
         if not moves:
-            QMessageBox.warning(self, "Odczyt", "Zapis znaleziony, ale ruchy są puste/niepoprawne.")
+            QMessageBox.warning(self, "Load", "Save found, error moves.")
             return
 
         self.reset_map()
@@ -638,7 +662,75 @@ class SokobanWindow(QMainWindow):
         self.start_animation(moves, interval_ms=60)
 
 
+###########################################################        
+##################                       ##################
+################## REINFORCMENT LEARNING ##################
+##################      SAVE AND LOAD    ##################
+########################################################### 
 
+    def save_dqn_clicked(self):
+        if self.dqn_agent is None:
+            QMessageBox.information(self, "Save DQN", "Train or load agent first.")
+            return
+        if self.level is None:
+            return
+
+        map_id = int(self.map_spin.value())
+        agent_path = fr"solutions\dqn_map{map_id}.pt"
+        log_path = fr"solutions\dqn_map{map_id}_episodes.json"
+
+        # agent: wagi
+        obs, mask = self._make_env_for_current_map().reset()
+        self.dqn_agent.save(agent_path)
+
+        # epizody: ruchy per ep
+        save_episodes_log(log_path, self.dqn_episodes_log)
+
+        QMessageBox.information(self, "Save DQN", f"Saved:\n{agent_path}\n{log_path}")
+
+    def load_dqn_clicked(self):
+        env = self._make_env_for_current_map()
+        if env is None:
+            return
+
+        map_id = int(self.map_spin.value())
+        agent_path = fr"solutions\dqn_map{map_id}.pt"
+        log_path = fr"solutions\dqn_map{map_id}_episodes.json"
+
+        # potrzebujemy obs_shape + n_actions (z env.reset)
+        obs, mask = env.reset()
+        try:
+            self.dqn_agent = DQNAgent.load(agent_path, obs_shape=obs.shape, n_actions=mask.shape[0])
+        except Exception as e:
+            QMessageBox.warning(self, "Load DQN", f"Error loading agent: {e}")
+            return
+
+        self.dqn_episodes_log = load_episodes_log(log_path)
+        self.btn_play_rl.setEnabled(True)
+        self.btn_save_dqn.setEnabled(True)
+        self.btn_replay_ep.setEnabled(len(self.dqn_episodes_log) > 0)
+
+        self.update_stats(f"DQN: loaded, episodes={len(self.dqn_episodes_log)}")
+
+    def replay_episode_clicked(self):
+        if not self.dqn_episodes_log:
+            QMessageBox.information(self, "Replay", "No episodes saved.")
+            return
+
+        ep = int(self.ep_spin.value())
+        # ep numerowane od 1
+        idx = ep - 1
+        if idx < 0 or idx >= len(self.dqn_episodes_log):
+            QMessageBox.warning(self, "Replay", f"Episode over available range. Only {len(self.dqn_episodes_log)} episodes.")
+            return
+
+        item = self.dqn_episodes_log[idx]
+        moves_s = str(item.get("moves", "")).strip().upper()
+        moves = [c for c in moves_s if c in ("U", "D", "L", "R")]
+
+        self.reset_map()
+        self.update_stats(f"Replay ep={ep} solved={item.get('solved')} return={item.get('return')}")
+        self.start_animation(moves, interval_ms=35)
 
 ###########################################################        
 ##################                       ##################
@@ -689,15 +781,19 @@ class SokobanWindow(QMainWindow):
         worker.done.connect(self._on_dqn_trained)
         worker.start()
 
-    def _on_dqn_trained(self, agent: DQNAgent):
+    def _on_dqn_trained(self, payload):
+        agent, ep_log = payload
         self.dqn_agent = agent
-        self.update_stats("DQN: trained")
+        self.dqn_episodes_log = ep_log
+        self.update_stats(f"DQN: trained, episodes={len(ep_log)}")
         self.btn_train_rl.setEnabled(True)
         self.btn_play_rl.setEnabled(True)
+        self.btn_save_dqn.setEnabled(True)
+        self.btn_replay_ep.setEnabled(len(ep_log) > 0)
 
     def play_dqn_clicked(self):
         if self.dqn_agent is None:
-            QMessageBox.information(self, "DQN", "Najpierw kliknij Train DQN.")
+            QMessageBox.information(self, "DQN", "Train DQN first.")
             return
 
         env = self._make_env_for_current_map()
@@ -737,14 +833,14 @@ class DQNTrainWorker(QThread):
         def on_log(ep, total_steps, eps, avg_ret, solved_rate):
             self.log.emit(f"DQN: ep={ep} steps={total_steps} eps={eps:.2f} avg_ret={avg_ret:.1f} solved={solved_rate:.2f}")
 
-        agent = train_dqn(
+        agent, ep_log = train_dqn(
             self.env,
-            episodes=3000,
+            episodes=10000,
             on_log=on_log,
             on_step=on_step,
             should_visualize=should_vis,
         )
-        self.done.emit(agent)
+        self.done.emit((agent, ep_log))
 
 
 

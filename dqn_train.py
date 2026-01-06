@@ -1,12 +1,14 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from collections import deque
-from typing import Deque, List, Optional, Tuple, Callable
+from typing import Deque, List, Optional, Tuple, Callable, Any, Dict
 import random
 import numpy as np # type: ignore
 import torch # type: ignore
 import torch.nn as nn # type: ignore
 import torch.optim as optim # type: ignore
+import json
+from pathlib import Path
 
 @dataclass
 class Transition:
@@ -20,7 +22,7 @@ class Transition:
 
 
 class ReplayBuffer:
-    def __init__(self, capacity: int = 50_000):
+    def __init__(self, capacity: int = 150_000):
         self.buf: Deque[Transition] = deque(maxlen=capacity)
 
     def push(self, obs, mask, action, reward, next_obs, next_mask, done):
@@ -68,11 +70,11 @@ class DQNAgent:
         self,
         obs_shape: Tuple[int, int, int],
         n_actions: int = 4,
-        lr: float = 1e-3,
-        gamma: float = 0.995,
-        batch_size: int = 64,
-        buffer_capacity: int = 150_000,
-        target_update_every: int = 2000,
+        lr: float = 2e-4,
+        gamma: float = 0.99,
+        batch_size: int = 128,
+        buffer_capacity: int = 500_000,
+        target_update_every: int = 750,
         device: Optional[str] = None,
     ):
         c, h, w = obs_shape
@@ -91,6 +93,40 @@ class DQNAgent:
         self.n_actions = n_actions
         self.learn_steps = 0
         self.target_update_every = target_update_every
+
+    def save(self, path: str) -> None:
+        payload = {
+            "obs_shape": self.q.conv[0].in_channels,  # nie używamy; poniżej i tak zapisujemy jawnie
+            "n_actions": self.n_actions,
+            "gamma": self.gamma,
+            "batch_size": self.batch_size,
+            "target_update_every": self.target_update_every,
+            "learn_steps": self.learn_steps,
+            "q_state": self.q.state_dict(),
+            "q_tgt_state": self.q_tgt.state_dict(),
+            "optim_state": self.optim.state_dict(),
+        }
+        torch.save(payload, path)
+
+    @staticmethod
+    def load(path: str, obs_shape: Tuple[int, int, int], n_actions: int, device: str | None = None) -> "DQNAgent":
+        payload = torch.load(path, map_location="cpu")
+        agent = DQNAgent(
+            obs_shape=obs_shape,
+            n_actions=n_actions,
+            gamma=float(payload.get("gamma", 0.995)),
+            batch_size=int(payload.get("batch_size", 64)),
+            target_update_every=int(payload.get("target_update_every", 2000)),
+            device=device,
+        )
+        agent.q.load_state_dict(payload["q_state"])
+        agent.q_tgt.load_state_dict(payload["q_tgt_state"])
+        agent.optim.load_state_dict(payload["optim_state"])
+        agent.learn_steps = int(payload.get("learn_steps", 0))
+        agent.q.eval()
+        agent.q_tgt.eval()
+        return agent
+
 
     @torch.no_grad()
     def act(self, obs: np.ndarray, mask: np.ndarray, eps: float) -> int:
@@ -158,13 +194,15 @@ class DQNAgent:
 
 def train_dqn(
     env,
-    episodes: int = 2000,
-    max_steps: int = 150,
-    warmup_steps: int = 10000,
-    epsilon_decay_steps: int = 70_000,
+    episodes: int = 40000,
+    max_steps: int = 160,
+    warmup_steps: int = 30000,
+    epsilon_decay_steps: int = 250_000,
     eps_start: float = 1.0,
     eps_end: float = 0.05,
     learn_every: int = 1,
+    checkpoint_path: str | None = None,
+    checkpoint_every: int = 200,
     on_log: Optional[Callable[[int, int, float, float, float], None]] = None,
     on_step: Optional[Callable[[int, int, float, object], None]] = None,
     should_visualize: Optional[Callable[[], bool]] = None,
@@ -176,6 +214,8 @@ def train_dqn(
     """
     obs0, mask0 = env.reset()
     agent = DQNAgent(obs_shape=obs0.shape, n_actions=mask0.shape[0])
+
+    episodes_log: List[Dict[str, Any]] = []
 
     total_steps = 0
     solved = 0
@@ -189,13 +229,15 @@ def train_dqn(
 
     for ep in range(1, episodes + 1):
         obs, mask = env.reset()
-
+        ep_moves: List[str] = []
         ep_ret = 0.0
         for _ in range(max_steps):
             eps = eps_by_step(total_steps)
             a = agent.act(obs, mask, eps)
             out, next_mask = env.step(a)
-
+            
+            ep_moves.extend(out.info.get("moves", []))
+            
             agent.push(obs, mask, a, out.reward, out.obs, next_mask, out.done)
 
             obs, mask = out.obs, next_mask
@@ -228,7 +270,16 @@ def train_dqn(
             solved_rate = solved / ep
             on_log(ep, total_steps, eps_by_step(total_steps), avg_ret, solved_rate)
 
-    return agent
+        ep_solved = bool(env.level.is_solved(env.state))
+        episodes_log.append({
+            "ep": ep,
+            "return": float(ep_ret),
+            "solved": ep_solved,
+            "moves": "".join(ep_moves),   # zapis jako string
+            "pushes": int(getattr(env, "pushes", 0)),
+        })
+
+    return agent, episodes_log
 
 @torch.no_grad()
 def play_dqn(env, agent: DQNAgent, max_steps: int = 150) -> list[int]:
@@ -243,3 +294,12 @@ def play_dqn(env, agent: DQNAgent, max_steps: int = 150) -> list[int]:
             break
     return moves_all
 
+
+def save_episodes_log(path: str, episodes_log: list[dict]) -> None:
+    Path(path).write_text(json.dumps(episodes_log, ensure_ascii=False, indent=2), encoding="utf-8")
+
+def load_episodes_log(path: str) -> list[dict]:
+    p = Path(path)
+    if not p.exists():
+        return []
+    return json.loads(p.read_text(encoding="utf-8"))
