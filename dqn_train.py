@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from collections import deque
-from typing import Deque, Optional, Tuple, Callable
+from typing import Deque, List, Optional, Tuple, Callable
 import random
 import numpy as np # type: ignore
 import torch # type: ignore
@@ -158,17 +158,21 @@ class DQNAgent:
 
 def train_dqn(
     env,
-    episodes: int = 3000,
+    episodes: int = 2000,
     max_steps: int = 150,
     warmup_steps: int = 10000,
-    epsilon_decay_steps: int = 150_000,
+    epsilon_decay_steps: int = 70_000,
     eps_start: float = 1.0,
     eps_end: float = 0.05,
     learn_every: int = 1,
     on_log: Optional[Callable[[int, int, float, float, float], None]] = None,
+    on_step: Optional[Callable[[int, int, float, object], None]] = None,
+    should_visualize: Optional[Callable[[], bool]] = None,
 ):
     """
     on_log(ep, total_steps, eps, avg_return, solved_rate)
+    on_step(ep, t, eps, payload_dict)
+    payload_dict zawiera snapshot env.state i info z kroku
     """
     obs0, mask0 = env.reset()
     agent = DQNAgent(obs_shape=obs0.shape, n_actions=mask0.shape[0])
@@ -201,6 +205,16 @@ def train_dqn(
 
             if total_steps >= warmup_steps and agent.can_learn() and (total_steps % learn_every == 0):
                 agent.learn()
+
+            if on_step and (should_visualize is None or should_visualize()):
+                payload = {
+                    "state": env.state,         
+                    "pushes": getattr(env, "pushes", None),
+                    "reward": out.reward,
+                    "done": out.done,
+                    "info": out.info,           
+                }
+                on_step(ep, total_steps, eps, payload)
 
             if out.done:
                 break

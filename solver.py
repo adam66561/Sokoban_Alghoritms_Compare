@@ -59,6 +59,27 @@ def is_corner_deadlock(level: Level, s: State) -> bool:
     return False
 
 
+def is_better_deadlock(level: Level, state: State) -> bool:
+    if is_corner_deadlock(level, state):
+        return True
+
+    for box in state.boxes:
+        if box in level.goals:
+            continue
+            
+        x, y = box
+        neighbors = [(x+1, y), (x, y+1), (x+1, y+1)]
+        
+        blocked_count = 0
+        for nx, ny in neighbors:
+            if (nx, ny) in level.walls or (nx, ny) in state.boxes:
+                blocked_count += 1
+        
+        if blocked_count == 3:
+            return True
+            
+    return False
+
 def bfs_solve(
     level: Level,
     start: State,
@@ -213,6 +234,20 @@ def heuristic_manhattan_to_goals(level: Level, s: State) -> int:
         return 0
     h = 0
     for (bx, by) in s.boxes:
+        best = min(abs(bx - gx) + abs(by - gy) for (gx, gy) in goals)
+        h += best
+    return h
+
+# potrzebne dla dqn bo kolejne epizody ciagle powtarzaja blad pchania skrzynki ktora juz jest na miejscu
+def heuristic_manhattan_to_goals_only_unsolved(level: Level, s: State) -> int:
+    unsolved_boxes = [b for b in s.boxes if b not in level.goals]
+    if not unsolved_boxes:
+        return 0
+    goals = list(level.goals)
+    if not goals:
+        return 0
+    h = 0
+    for (bx, by) in unsolved_boxes:
         best = min(abs(bx - gx) + abs(by - gy) for (gx, gy) in goals)
         h += best
     return h

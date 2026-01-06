@@ -5,7 +5,7 @@ from collections import deque
 import numpy as np # type: ignore
 
 from level import Level, State
-from solver import is_corner_deadlock, heuristic_manhattan_to_goals
+from solver import is_better_deadlock, heuristic_manhattan_to_goals_only_unsolved
 
 DIRS = {
     "U": (0, -1),
@@ -59,7 +59,7 @@ class PushSokobanEnv:
 
         self.visited_states = {(self.state.player, tuple(sorted(self.state.boxes)))}
 
-        self.prev_h = heuristic_manhattan_to_goals(self.level, self.state)
+        self.prev_h = heuristic_manhattan_to_goals_only_unsolved(self.level, self.state)
         self.prev_on_goals = self._boxes_on_goals()
 
         obs = self._obs()
@@ -183,7 +183,7 @@ class PushSokobanEnv:
 
         state_hash = (self.state.player, tuple(sorted(self.state.boxes)))
         if state_hash in self.visited_states:
-            reward -= 2.0  # kara za kręcenie się w kółko
+            reward -= 10.0  # kara za kręcenie się w kółko
         self.visited_states.add(state_hash)
 
         # kara i koniec gdy akcja nielegalna
@@ -230,13 +230,13 @@ class PushSokobanEnv:
             self.prev_on_goals = new_on
 
             # deadlock po pchnięciu
-            if pushed and is_corner_deadlock(self.level, self.state):
-                reward -= 10.0
+            if pushed and is_better_deadlock(self.level, self.state):
+                reward -= 100.0
                 done = True
 
             # heurystyka delta 
-            h = heuristic_manhattan_to_goals(self.level, self.state)
-            reward += 5.0 * (self.prev_h - h)
+            h = heuristic_manhattan_to_goals_only_unsolved(self.level, self.state)
+            reward += 2.0 * (self.prev_h - h)
             self.prev_h = h
 
             if self.level.is_solved(self.state):

@@ -8,11 +8,14 @@ from PySide6.QtCore import QTimer, Qt, QSize, QThread, Signal # type: ignore
 from level import Level, State 
 from solver import bfs_solve, dfs_solve, a_star_solve, gbfs_solve # type: ignore
 from typing import Callable
-import time
 from tree import generate_bfs_tree, export_tree_to_dot, render_and_open_dot # type: ignore
 import math
 from push_env import PushSokobanEnv # type: ignore
 from dqn_train import train_dqn, play_dqn, DQNAgent # type: ignore
+import json
+from datetime import datetime, time
+import time
+from pathlib import Path
 
 
 def load_single_maze(path: str, maze_number: int) -> list[str] | None:
@@ -40,6 +43,16 @@ def load_single_maze(path: str, maze_number: int) -> list[str] | None:
             return board
 
     return None
+
+SOLUTIONS_FILE = Path("solutions.json")
+ALGO_KEYS = {"BFS", "DFS", "A*", "GBFS"}
+
+def moves_to_str(moves: list[str]) -> str:
+    return "".join(moves)
+
+def str_to_moves(s: str) -> list[str]:
+    s = s.strip().upper()
+    return [ch for ch in s if ch in ("U", "D", "L", "R")]
 
 
 class SokobanWindow(QMainWindow):
@@ -74,6 +87,11 @@ class SokobanWindow(QMainWindow):
         self.solution_i = 0
 
         self.game_over = False
+
+        self.last_solution_algo: str | None = None
+        self.last_solution_moves: list[str] = []
+        self.last_solve_result = None  
+
 
         # --- UI layout ---
         root = QWidget()
@@ -133,6 +151,31 @@ class SokobanWindow(QMainWindow):
         top.addWidget(self.stats)
         top.addStretch(1)
 
+        mid = QHBoxLayout()
+        layout.addLayout(mid)
+        self.btn_save_sol = QPushButton("Zapisz rozwiązanie")
+        self.btn_save_sol.clicked.connect(self.save_solution_clicked)
+        self.btn_save_sol.setEnabled(False) 
+        mid.addWidget(self.btn_save_sol)
+
+        self.btn_load_sol_bfs = QPushButton("Wczytaj rozwiązanie BFS")
+        self.btn_load_sol_bfs.clicked.connect(lambda: self.load_solution_clicked("BFS"))
+        mid.addWidget(self.btn_load_sol_bfs)
+
+        self.btn_load_sol_dfs = QPushButton("Wczytaj rozwiązanie DFS")
+        self.btn_load_sol_dfs.clicked.connect(lambda: self.load_solution_clicked("DFS"))
+        mid.addWidget(self.btn_load_sol_dfs)
+
+        self.btn_load_sol_astar = QPushButton("Wczytaj rozwiązanie A*")
+        self.btn_load_sol_astar.clicked.connect(lambda: self.load_solution_clicked("A*"))
+        mid.addWidget(self.btn_load_sol_astar)
+
+        self.btn_load_sol_gbfs = QPushButton("Wczytaj rozwiązanie GBFS")
+        self.btn_load_sol_gbfs.clicked.connect(lambda: self.load_solution_clicked("GBFS"))
+        mid.addWidget(self.btn_load_sol_gbfs)
+
+        mid.addStretch(1)
+
         # Plansza
         self.scene = QGraphicsScene(self)
         self.view = QGraphicsView(self.scene)
@@ -173,6 +216,11 @@ class SokobanWindow(QMainWindow):
     def toggle_visualize(self):
         self.visualize_mode = not self.visualize_mode
         self.btn_vis.setText("Visualize ON" if not self.visualize_mode else "Visualize OFF")
+        
+        if isinstance(self._rl_thread, DQNTrainWorker):
+            self._rl_thread.visualize_enabled = self.visualize_mode
+            self._rl_thread.step_delay_ms = 60 if self.visualize_mode else 0
+
         self.layer_cells.clear()
         self.redraw()
 
@@ -258,7 +306,7 @@ class SokobanWindow(QMainWindow):
         if self.visualize_mode == False:
             return
 
-        if depth != self.layer_depth:
+        """if depth != self.layer_depth:
             self.layer_depth = depth
             self.layer_cells.clear()
 
@@ -267,7 +315,8 @@ class SokobanWindow(QMainWindow):
         self._last_ui_update = time.perf_counter()
         self.update_stats(
             f"BFS: depth={depth}, visited={visited}, expanded={expanded}, {int(expanded/max(dt,1e-9))}/s"
-        )
+        )"""
+        self.state = s
         self.redraw()
         QApplication.processEvents()
         if layer_end:
@@ -392,6 +441,12 @@ class SokobanWindow(QMainWindow):
             self.reset_map()  # start
             self.start_animation(res.last_moves)
 
+        if res.solved:
+            self._store_last_solution("BFS", res)
+        else:
+            self.btn_save_sol.setEnabled(False)
+
+
 
     def solve_dfs(self):
         self.first_depth.clear()
@@ -420,6 +475,11 @@ class SokobanWindow(QMainWindow):
             self.reset_map()  # start
             self.start_animation(res.last_moves)
 
+        if res.solved:
+            self._store_last_solution("DFS", res)
+        else:
+            self.btn_save_sol.setEnabled(False)
+
     
     def solve_astar(self):
         self.layer_depth = -1
@@ -444,6 +504,11 @@ class SokobanWindow(QMainWindow):
             self.reset_map()
             self.start_animation(res.last_moves)
 
+        if res.solved:
+            self._store_last_solution("A*", res)
+        else:
+            self.btn_save_sol.setEnabled(False)
+
 
     def solve_gbfs(self):
         self.layer_depth = -1
@@ -467,6 +532,113 @@ class SokobanWindow(QMainWindow):
             self.reset_map()
             self.start_animation(res.last_moves)
 
+        if res.solved:
+            self._store_last_solution("GBFS", res)
+        else:
+            self.btn_save_sol.setEnabled(False)
+
+
+###########################################################        
+##################                       ##################
+##################    LOAD AND SAVE      ##################
+##################                       ##################
+###########################################################   
+
+    def _load_solutions_db(self) -> dict:
+        if not SOLUTIONS_FILE.exists():
+            return {"version": 1, "items": []}
+        try:
+            return json.loads(SOLUTIONS_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            return {"version": 1, "items": []}
+
+    def _save_solutions_db(self, db: dict) -> None:
+        SOLUTIONS_FILE.write_text(json.dumps(db, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _current_map_id(self) -> int:
+        return int(self.map_spin.value())
+
+    def _store_last_solution(self, algo: str, res):
+        self.last_solution_algo = algo
+        self.last_solution_moves = res.moves[:] if res.solved else []
+        self.last_solve_result = res
+        self.btn_save_sol.setEnabled(res.solved and bool(res.moves))
+
+
+    def save_solution_clicked(self):
+        res = self.last_solve_result
+        if res is None or not res.solved:
+            QMessageBox.information(self, "Zapis", "Brak rozwiązania do zapisania.")
+            return
+
+
+        map_id = self._current_map_id()
+        algo = self.last_solution_algo
+        moves_s = moves_to_str(self.last_solution_moves)
+
+        pushes = None
+        if self.level is not None and self.start_state is not None:
+            from solver import count_pushes  # type: ignore
+            pushes = count_pushes(self.level, self.start_state, self.last_solution_moves)
+
+        db = self._load_solutions_db()
+        items: list[dict] = db.get("items", [])
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        new_item = {
+            "map_id": map_id,
+            "algo": algo,
+            "moves": moves_s,
+            "len_moves": len(self.last_solution_moves),
+            "pushes": int(getattr(res, "pushes", 0)),
+            "visited_states": int(getattr(res, "visited_states", 0)),
+            "expanded_states": int(getattr(res, "expanded_states", 0)),
+            "time_ms": float(getattr(res, "time_ms", 0.0)),
+            "saved_at": now,
+        }
+
+
+        replaced = False
+        for i, it in enumerate(items):
+            if int(it.get("map_id", -1)) == map_id and str(it.get("algo")) == algo:
+                items[i] = new_item
+                replaced = True
+                break
+        if not replaced:
+            items.append(new_item)
+
+        db["items"] = items
+        self._save_solutions_db(db)
+
+        QMessageBox.information(self, "Zapis", f"Zapisano rozwiązanie: mapa {map_id}, {algo} ({len(self.last_solution_moves)} ruchów).")
+
+    def load_solution_clicked(self, algo: str):
+        map_id = self._current_map_id()
+        db = self._load_solutions_db()
+        items: list[dict] = db.get("items", [])
+
+        cand = [
+            it for it in items
+            if int(it.get("map_id", -1)) == map_id and str(it.get("algo")) == algo
+        ]
+        if not cand:
+            QMessageBox.information(self, "Odczyt", f"Brak zapisanego rozwiązania {algo} dla mapy {map_id}.")
+            return
+
+        cand.sort(key=lambda it: int(it.get("len_moves", 10**9)))
+        best = cand[0]
+
+        moves = str_to_moves(str(best.get("moves", "")))
+        if not moves:
+            QMessageBox.warning(self, "Odczyt", "Zapis znaleziony, ale ruchy są puste/niepoprawne.")
+            return
+
+        self.reset_map()
+        self.update_stats(f"Loaded: mapa={map_id} algo={algo} ruchy={len(moves)}")
+        self.start_animation(moves, interval_ms=60)
+
+
+
 
 ###########################################################        
 ##################                       ##################
@@ -478,6 +650,23 @@ class SokobanWindow(QMainWindow):
         if self.level is None or self.start_state is None:
             return None
         return PushSokobanEnv(self.level, self.start_state, max_pushes=80)
+    
+    def _on_dqn_step_visualize(self, moves):
+        """Wywoływane po każdym kroku DQN, jeśli wizualizacja jest aktywna."""
+        self.start_animation(moves, interval_ms=20)
+
+    def _on_dqn_step(self, payload: dict):
+        # payload["state"] to State z env po macro-kroku (push) :contentReference[oaicite:6]{index=6}
+        s: State = payload["state"]
+        self.state = s
+
+        ep = payload.get("ep")
+        eps = payload.get("eps")
+        rew = payload.get("reward")
+        pushes = payload.get("pushes")
+
+        self.update_stats(f"DQN VIS: ep={ep} eps={eps:.2f} pushes={pushes} r={rew:.1f}")
+        self.redraw()
 
 
     def train_dqn_clicked(self):
@@ -489,10 +678,14 @@ class SokobanWindow(QMainWindow):
         self.btn_train_rl.setEnabled(False)
         self.btn_play_rl.setEnabled(False)
 
-        worker = DQNTrainWorker(env)
+        # callback sprawdza czy wizualizacja jest włączona.
+        show_viz_checker = lambda: self.cb_show_viz.isChecked() if hasattr(self, 'cb_show_viz') else False
+
+        worker = DQNTrainWorker(env, show_viz_checker)
         self._rl_thread = worker
 
         worker.log.connect(self.update_stats)
+        worker.step.connect(self._on_dqn_step)
         worker.done.connect(self._on_dqn_trained)
         worker.start()
 
@@ -520,16 +713,37 @@ class SokobanWindow(QMainWindow):
 class DQNTrainWorker(QThread):
     log = Signal(str)
     done = Signal(object)  # agent
+    step = Signal(object)
 
-    def __init__(self, env: PushSokobanEnv):
+    def __init__(self, env: PushSokobanEnv, show_viz_callback):
         super().__init__()
         self.env = env
+        self.visualize_enabled = False  
+        self.step_delay_ms = 0
 
     def run(self):
+        def should_vis():
+            return self.visualize_enabled
+
+        def on_step(ep, t, eps, payload):
+            payload["ep"] = ep
+            payload["t"] = t
+            payload["eps"] = eps
+            self.step.emit(payload)
+
+            if self.step_delay_ms > 0:
+                self.msleep(self.step_delay_ms)
+
         def on_log(ep, total_steps, eps, avg_ret, solved_rate):
             self.log.emit(f"DQN: ep={ep} steps={total_steps} eps={eps:.2f} avg_ret={avg_ret:.1f} solved={solved_rate:.2f}")
 
-        agent = train_dqn(self.env, episodes=3000, on_log=on_log)
+        agent = train_dqn(
+            self.env,
+            episodes=3000,
+            on_log=on_log,
+            on_step=on_step,
+            should_visualize=should_vis,
+        )
         self.done.emit(agent)
 
 
