@@ -28,10 +28,10 @@ class PushSokobanEnv:
     - akcja = (cell_index, dir) zakodowana jako idx = (y*w + x)*4 + dir_idx
     - legalność akcji sprawdzana maską (action_mask)
     - wykonanie akcji: agent "teleportuje się logicznie" poprzez walk + push
-      (środowisko generuje sekwencję UDLR w info['moves'] żebyś mógł to animować w GUI)
+      (środowisko generuje sekwencję UDLR w info['moves'] żeby to animować w GUI)
     """
 
-    def __init__(self, level: Level, start: State, max_pushes: int = 160):
+    def __init__(self, level: Level, start: State, max_pushes: int = 120):
         self.level = level
         self.start = start
         self.max_pushes = max_pushes
@@ -178,7 +178,7 @@ class PushSokobanEnv:
         """
         self.pushes += 1
         done = False
-        reward = -2.0  # koszt pchnięcia (macro-step)
+        reward = -1.0  # koszt pchnięcia (macro-step)
         info: Dict = {}
 
         state_hash = (self.state.player, tuple(sorted(self.state.boxes)))
@@ -236,7 +236,7 @@ class PushSokobanEnv:
 
             # heurystyka delta 
             h = heuristic_manhattan_to_goals_only_unsolved(self.level, self.state)
-            reward += 2.0 * (self.prev_h - h)
+            reward += 6.0 * (self.prev_h - h)
             self.prev_h = h
 
             if self.level.is_solved(self.state):

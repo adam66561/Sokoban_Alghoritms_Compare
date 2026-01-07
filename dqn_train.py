@@ -70,11 +70,11 @@ class DQNAgent:
         self,
         obs_shape: Tuple[int, int, int],
         n_actions: int = 4,
-        lr: float = 2e-4,
+        lr: float = 3e-4,
         gamma: float = 0.99,
         batch_size: int = 128,
-        buffer_capacity: int = 500_000,
-        target_update_every: int = 750,
+        buffer_capacity: int = 200_000,
+        target_update_every: int = 500,
         device: Optional[str] = None,
     ):
         c, h, w = obs_shape
@@ -194,12 +194,12 @@ class DQNAgent:
 
 def train_dqn(
     env,
-    episodes: int = 40000,
-    max_steps: int = 160,
-    warmup_steps: int = 30000,
-    epsilon_decay_steps: int = 250_000,
+    episodes: int = 12000,
+    max_steps: int = 120,
+    warmup_steps: int = 8000,
+    epsilon_decay_steps: int = 80_000,
     eps_start: float = 1.0,
-    eps_end: float = 0.05,
+    eps_end: float = 0.07,
     learn_every: int = 1,
     checkpoint_path: str | None = None,
     checkpoint_every: int = 200,

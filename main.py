@@ -16,7 +16,7 @@ import json
 from datetime import datetime, time
 import time
 from pathlib import Path
-from dqn_train import train_dqn, play_dqn, DQNAgent, save_episodes_log, load_episodes_log
+from dqn_train import train_dqn, play_dqn, DQNAgent, save_episodes_log, load_episodes_log # type: ignore
 
 
 def load_single_maze(path: str, maze_number: int) -> list[str] | None:
@@ -61,21 +61,10 @@ class SokobanWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("Sokoban (PySide6)")
 
-        self.first_depth: dict[tuple[int,int], int] = {}   # (x,y) -> minimalny depth
-        self.current_depth: int = 0
-        self._last_ui_update = 0.0
-
-        self.heat_player: dict[tuple[int,int], int] = {}
-        self.last_bfs_state: State | None = None
-        self._last_ui_update_t = 0.0
-
         self.maps_path = maps_path
         self.level: Level | None = None
         self.state: State | None = None
         self.start_state: State | None = None
-
-        self.layer_depth = -1
-        self.layer_cells: set[tuple[int, int]] = set()
 
         self.visualize_mode = False
 
@@ -245,7 +234,6 @@ class SokobanWindow(QMainWindow):
             self._rl_thread.visualize_enabled = self.visualize_mode
             self._rl_thread.step_delay_ms = 60 if self.visualize_mode else 0
 
-        self.layer_cells.clear()
         self.redraw()
 
 
@@ -330,16 +318,6 @@ class SokobanWindow(QMainWindow):
         if self.visualize_mode == False:
             return
 
-        """if depth != self.layer_depth:
-            self.layer_depth = depth
-            self.layer_cells.clear()
-
-        self.layer_cells.add(s.player)
-
-        self._last_ui_update = time.perf_counter()
-        self.update_stats(
-            f"BFS: depth={depth}, visited={visited}, expanded={expanded}, {int(expanded/max(dt,1e-9))}/s"
-        )"""
         self.state = s
         self.redraw()
         QApplication.processEvents()
@@ -376,14 +354,6 @@ class SokobanWindow(QMainWindow):
                     self.scene.addPixmap(self.sprites["goal"]).setPos(x * tile, y * tile)
                 else:
                     self.scene.addPixmap(self.sprites["floor"]).setPos(x * tile, y * tile)
-
-                if p in self.layer_cells:
-                    color = QColor()
-                    hue = (self.layer_depth * 17) % 360
-                    color.setHsv(hue, 255, 255, 180)
-                    overlay = self.scene.addRect(x * tile, y * tile, tile, tile)
-                    overlay.setPen(Qt.NoPen)
-                    overlay.setBrush(QBrush(color))
 
         self.scene.setSceneRect(0, 0, w * tile, h * tile)
         self.view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
@@ -439,15 +409,8 @@ class SokobanWindow(QMainWindow):
 
 
     def solve_bfs(self):
-        self.first_depth.clear()
-        self.current_depth = 0
-        self._last_ui_update = 0.0
-        
         if self.level is None or self.state is None:
             return
-
-        self.layer_depth = -1
-        self.layer_cells.clear()
 
         level, start = Level.from_lines(load_single_maze("./maps/sokoban-maps-60-plain.txt", self.map_spin.value()))
         parent, children, depth, edge_action = generate_bfs_tree(level, start, max_nodes=500)
@@ -473,15 +436,8 @@ class SokobanWindow(QMainWindow):
 
 
     def solve_dfs(self):
-        self.first_depth.clear()
-        self.current_depth = 0
-        self._last_ui_update = 0.0
-        
         if self.level is None or self.state is None:
             return
-
-        self.layer_depth = -1
-        self.layer_cells.clear()
 
         level, start = Level.from_lines(load_single_maze("./maps/sokoban-maps-60-plain.txt", self.map_spin.value()))
         parent, children, depth, edge_action = generate_bfs_tree(level, start, max_nodes=500)
@@ -506,10 +462,6 @@ class SokobanWindow(QMainWindow):
 
     
     def solve_astar(self):
-        self.layer_depth = -1
-        self.layer_cells.clear()
-        self._last_ui_update = 0.0
-
         if self.level is None or self.state is None:
             return
 
@@ -535,10 +487,6 @@ class SokobanWindow(QMainWindow):
 
 
     def solve_gbfs(self):
-        self.layer_depth = -1
-        self.layer_cells.clear()
-        self._last_ui_update = 0.0
-
         if self.level is None or self.state is None:
             return
 
@@ -743,10 +691,6 @@ class SokobanWindow(QMainWindow):
             return None
         return PushSokobanEnv(self.level, self.start_state, max_pushes=80)
     
-    def _on_dqn_step_visualize(self, moves):
-        """Wywoływane po każdym kroku DQN, jeśli wizualizacja jest aktywna."""
-        self.start_animation(moves, interval_ms=20)
-
     def _on_dqn_step(self, payload: dict):
         # payload["state"] to State z env po macro-kroku (push) :contentReference[oaicite:6]{index=6}
         s: State = payload["state"]
@@ -770,10 +714,7 @@ class SokobanWindow(QMainWindow):
         self.btn_train_rl.setEnabled(False)
         self.btn_play_rl.setEnabled(False)
 
-        # callback sprawdza czy wizualizacja jest włączona.
-        show_viz_checker = lambda: self.cb_show_viz.isChecked() if hasattr(self, 'cb_show_viz') else False
-
-        worker = DQNTrainWorker(env, show_viz_checker)
+        worker = DQNTrainWorker(env)
         self._rl_thread = worker
 
         worker.log.connect(self.update_stats)
@@ -811,7 +752,7 @@ class DQNTrainWorker(QThread):
     done = Signal(object)  # agent
     step = Signal(object)
 
-    def __init__(self, env: PushSokobanEnv, show_viz_callback):
+    def __init__(self, env: PushSokobanEnv):
         super().__init__()
         self.env = env
         self.visualize_enabled = False  
@@ -835,7 +776,7 @@ class DQNTrainWorker(QThread):
 
         agent, ep_log = train_dqn(
             self.env,
-            episodes=10000,
+            episodes=12000,
             on_log=on_log,
             on_step=on_step,
             should_visualize=should_vis,
